@@ -1237,3 +1237,1290 @@ merged_data %>%
 merged_data %>%
   group_by(AgeCat, Region) %>%
   summarize(Count = n_distinct(PatientID))
+
+##############################################
+# AUTHOR: Hiwot Weldemariam 
+# Project SAIA: Baseline data MH prescription 
+# CREATED on: August 2023
+# updated on: April 2024
+##############################################
+
+# Set working directory
+rm(list=ls())
+setwd("~/Desktop/ThesisData/")
+
+# Load libraries 
+library("tidyverse")
+library("haven")
+library("rigr")
+library(dplyr)
+
+library(epiR)
+library(dplyr)
+
+library(haven)
+library(table1)
+library(survival)
+library(nlme)
+library(lme4)
+
+library(survminer)
+library(ggplot2)
+
+
+# survival object
+saiasurv<- read.csv("~/Desktop/ThesisData/New/Saia_surv_march21_final.csv")
+head(saiasurv)
+
+view(saiasurv)
+
+
+
+# Create the Surv object with the filtered data
+
+s.saia <- Surv(time = saiasurv$Time, event = saiasurv$Event)
+summary(s.saia)
+
+saia.km = survfit(s.saia ~ 1,cluster = saiasurv$facility, 
+                  conf.type = "log-log")
+summary(saia.km)
+
+# km curve 
+
+plot(saia.km, main = "Kaplan-Meier survival estimate", 
+     xlab = "Survival time (Days)", 
+     ylab = "Survival Probability",cex=1.5)
+       col= "red"
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+segments(60, -0.5, 60, 0.5, col="red", lty=3, lwd=1.5)
+segments(60, -0.5, 60, 0.5, col="orange", lty=3, lwd=1.5)
+segments(60, -0.5, 60, 0.5, col="orange", lty=3, lwd=1.5)
+# the median survival time for all
+surv_median(saia.km)
+
+saiasurv$primaryMed<- ifelse(saiasurv$Firstmeds =="Carbamazepine",0,
+                             ifelse(saiasurv$Firstmeds=="Haloperidol",1, 
+                                    ifelse(saiasurv$Firstmeds=="Amitriptyline",2,
+                                           ifelse(saiasurv$Firstmeds=="Thioridazine",3,4))))
+
+table(saiasurv$primary_diagnosis)
+#primary diagnosis 
+saiasurv$primaryDiag<- ifelse(saiasurv$PrimaryD=="Epilepsy",0,
+                              ifelse(saiasurv$PrimaryD=="Schizophrenia",1,
+                                     ifelse(saiasurv$PrimaryD=="Delusional disorder",2,
+                                            ifelse(saiasurv$PrimaryD=="Depressive episodes",3,
+                                                   ifelse(saiasurv$PrimaryD %in% c("Mental and behavioral disorders due to alcohol use",
+                                                                                "Mental and behavioral disorders due to multiple drug use",
+                                                                                "Mental and behavioral disorders due to opioid use"), 4, 5)))))
+
+table(saiasurv$AgeCat)
+
+saiasurv$AgeCat <- factor(saiasurv$AgeCat, levels = c("18-35", "<18", "36-55", "56+"))
+
+table(saiasurv$AgeCat)
+
+table(saiasurv$primaryDiag)
+table(saiasurv$primaryMed)
+library(gtsummary)
+
+# Your existing code with modification for statistic argument
+tab1_adh <- saiasurv %>%
+    select(Event, AgeCat, sex2, Martial, primaryDiag, primaryMed, SBP, DBP, Weight, BMI, WD_trueBL_all, Region) %>%
+    tbl_summary(by = Event, 
+                label = list(AgeCat ~ "Patient age group (years)",
+                             sex2 ~ "Patient being male",
+                             Martial ~ "Martial status",
+                             primaryDiag ~ "primary Diagnosies",
+                             primaryMed ~ "Primary Medication",
+                             SBP ~ "systolic blood pressure",
+                             DBP ~ "Diastolic blood pressure",
+                             Weight ~ "weight",
+                             BMI ~ "Body mass index",
+                             WD_trueBL_all ~ "WHODAS score"),
+                type = list(all_continuous() ~ 'continuous2'),
+                statistic = list(all_continuous() ~ c("{mean} ({sd})", "{median} ({p25}, {p75})"), # Add mean and SD, and median with IQR
+                                 all_categorical() ~ "{n} ({p}%)"),
+                digits = list(all_continuous() ~ c(1, 1, 1, 1), # Adjust digits to display for each statistic
+                              all_categorical() ~ c(0, 1)),
+                missing = "ifany") %>%
+    add_p()
+
+tab1_adh
+
+
+# Fit the Cox model
+
+#crude gender
+
+saiasurv$s.saia <- Surv(time = saiasurv$Time, event = saiasurv$Event)
+summary(s.saia)
+saia.cox_sex_c = coxph(s.saia ~ sex2  ,cluster = saiasurv$facility, data = saiasurv)
+# Display the summary of the model
+summary(saia.cox_sex_c)
+
+saiasurv$sex.group<- ifelse(saiasurv$sex2=="female",1,2)
+
+saiasurv$mar.group <- ifelse(saiasurv$Martial == "Common-law", 1,
+                             ifelse(saiasurv$Martial == "Divorced", 2,
+                                    ifelse(saiasurv$Martial == "Married", 3,
+                                           ifelse(saiasurv$Martial == "Separated", 4,
+                                                  ifelse(saiasurv$Martial == "Single", 5, 
+                                                         6)))))  # widowed
+
+saia.cox.globaltest = coxph(s.saia ~ primaryMed + primaryDiag + Age + mar.group +sex.group +Weight+SBP+DBP+WD_trueBL_all, 
+                     cluster = saiasurv$facility,
+                     data = saiasurv
+)
+summary(saia.cox.globaltest)
+#### adding weght, BP and WHODAS 
+
+saia.cox_weight = coxph(s.saia ~ saiasurv$Weight,cluster = saiasurv$facility, data = saiasurv)
+# Display the summary of the model
+summary(saia.cox_weight)
+
+
+saia.cox_whodas = coxph(s.saia ~ saiasurv$WD_trueBL_all,cluster = saiasurv$facility, data = saiasurv)
+# Display the summary of the model
+summary(saia.cox_whodas)
+
+saia.cox_spb = coxph(s.saia ~ saiasurv$SBP,cluster = saiasurv$facility, data = saiasurv)
+# Display the summary of the model
+summary(saia.cox_spb)
+
+saia.cox_dbp = coxph(s.saia ~ saiasurv$DBP,cluster = saiasurv$facility, data = saiasurv)
+# Display the summary of the model
+summary(saia.cox_dbp)
+
+
+
+
+
+
+
+#Km
+Surv_sex.km <- survfit(s.saia~ saiasurv$sex2, cluster = saiasurv$facility, data = saiasurv)
+
+surv_median(Surv_sex.km)# median survival time by sex 
+
+#km plot
+
+plot(Surv_sex.km, main = "KM survival estimate by sex",
+     xlab = "Survival time(Days)",
+     ylab = "Survival Probability",
+     col = c("red", "blue"))
+legend("topright", 
+       legend = c("Male", "Female"),
+       col = c("red", "blue"), 
+       lty = 1,
+bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+
+# log rank test
+
+survdiff(s.saia ~ sex2, data=saiasurv) # high p-value no statistical difference between male and female 
+
+### age group
+#crude
+
+#saiasurv$AgeCat <- factor(saiasurv$AgeCat, levels = c("18-35", "<18", "36-55", "55+"))
+
+# Run the Cox model
+cox.age <- coxph(s.saia ~ as.factor(AgeCat), cluster = saiasurv$facility, data = saiasurv)
+
+# View the summary
+summary(cox.age)
+
+
+
+
+
+Surv_age.km <- survfit(s.saia~ saiasurv$AgeCat, cluster = saiasurv$facility, data = saiasurv)
+
+surv_median(Surv_age.km)
+
+
+# Plot the km curve 
+plot(Surv_age.km, 
+     main = "KM Survival estimate by Age Group", 
+     xlab = "Survival time in (Days)", 
+     ylab = "Survival Probability", 
+     col = c("red", "blue", "yellow", "purple"))
+legend("topright", 
+       legend = c("<18", "18-35", "36-55",  "56+"),
+       lty = 1, 
+       col = c("red", "blue", "yellow", "purple"),
+       bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+    
+#log rank age
+table(saiasurv$AgeCat)
+survdiff(s.saia ~ AgeCat, data=saiasurv) # p=0.1 no difference b.n age group 
+### Martial status 
+
+# Converting 'Martial' to a factor
+saiasurv$Martial <- as.factor(saiasurv$Martial)
+
+# Setting 'Single' as the reference level
+saiasurv$Martial <- relevel(saiasurv$Martial, ref = "Single")
+
+# Running the Cox regression with 'Single' as the reference
+cox.mar <- coxph(s.saia~ as.factor(Martial), cluster = saiasurv$facility, data = saiasurv)
+
+# Summary of the model
+summary(cox.mar)
+
+
+surv_mar.km <- survfit(s.saia ~  as.factor(Martial) , cluster = saiasurv$facility, data = saiasurv)
+surv_median(surv_mar.km)
+
+
+# Plot the survival curves
+plot(surv_mar.km, 
+     main = "KM survival estimate by Marital Status", 
+     xlab = "Survival time(Days)", 
+     ylab = "Survival Probability", 
+     col = c("red", "blue", "green", "purple", "orange", "brown"))
+
+# Add a legend
+legend("topright", 
+       legend = c("Divorced", "Separated", "Widowed",
+                  "Married", "Common-law", "Single"), 
+       lty = 1, 
+       col = c("red", "blue", "green", "purple", "orange", "brown"),
+       bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+#log rank in marital status 
+survdiff(s.saia ~ Martial, data=saiasurv)
+### primary diag. 
+ 
+saia.cox.diag= coxph(s.saia ~ as.factor(primaryDiag), cluster = saiasurv$facility, data = saiasurv)
+summary(saia.cox.diag)
+
+surv_diag.km <- survfit(s.saia ~ as.factor(primaryDiag), cluster = saiasurv$facility, data = saiasurv)
+surv_median(surv_diag.km)
+
+###plot 
+
+# Adjust the margins of the plot (increase the bottom margin)
+par(mar = c(8, 4, 4, 2))
+
+# Plot the survival 
+plot(surv_diag.km, 
+     main = "KM survival estimate by Primary Diagnosies", 
+     xlab = "Survival time(Days)", 
+     ylab = "Estimated survival Probability", 
+     col = c("red", "blue", "yellow", "purple", "orange", "black"))
+
+# Add a legend below the plot
+# Using normalized parent coordinates for positioning
+library(grid)
+legend("bottom", 
+       legend = c("Epilepsy", "Schizophrenia related disorders",
+                  "Other psychotic and delusional disorders",
+                  "Depression related disorders", 
+                  "Mental and Behavioural disorders due to substance use",
+                  "All other diagnoses"), 
+       lty = 1, 
+       col = c("red", "blue", "yellow", "purple", "orange", "black"), 
+       bty = "n", 
+       horiz = TRUE,
+       xpd = TRUE, 
+       inset = c(0, -1))
+
+abline(h = 0.5, col = "blue", lty = 3, lwd = 1.5)
+
+
+# Create a new blank plotting window
+plot.new()
+
+# Add a legend to the blank plotting window
+legend(x = "center", y = "center",
+       legend = c("Epilepsy", "Schizophrenia related disorders",
+                  "Other psychotic and delusional disorders",
+                  "Depression related disorders", 
+                  "Mental and Behavioural disorders due to substance use",
+                  "All other diagnoses"), 
+       lty = 1, 
+       col = c("red", "blue", "yellow", "purple", "orange", "black"), 
+       bty = "n", 
+       horiz = FALSE, 
+       cex = 1)  # Adjust the cex value for text size if needed
+
+
+
+
+#plot PM 
+
+
+plot(surv_diag.km, 
+     main = "KM survival estimate by Primary Diagnosies", 
+     xlab = "Survival time(Days)", 
+     ylab = "Survival Probability", 
+     col = c("red", "blue", "yellow", "purple", "orange", "black"))
+
+legend("topright", #inset=c(-0.2, -0.2), 
+       legend=c("Epilepsy", "Schizophrenia related disorders",
+                "Other psychotic and delusional disorders",
+                "Depression related disorders", 
+                "Mental and Behavioural disorders due to substance use",
+                "All other diagnoses"), 
+       pch=c(1, 1, 1, 1, 1, 1), # Adjust this as needed
+       col = c("red", "blue", "yellow", "purple", "orange", "black"), 
+       title=" ", bty="n", cex = 0.5)
+
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+
+survdiff(s.saia ~ primaryDiag, data=saiasurv) #p= 0.004 there is differnece 
+
+## Primary medication
+
+saia.cox.med = coxph(s.saia ~ as.factor(primaryMed), cluster = saiasurv$facility, data = saiasurv)
+summary(saia.cox.med)
+
+surv_med.km <- survfit(s.saia ~ as.factor(primaryMed), cluster = saiasurv$facility, data = saiasurv)
+surv_median(surv_med.km)
+
+## plot 
+plot(surv_med.km, main = "KM survival estimate by primary medication", 
+     xlab="Survival time(Days)", ylab="Estimated survival Probability",
+     col = c("red", "blue","yellow","purple", "orange"))
+legend("topright",c("Carbamazepine","Haloperidol", "Amitriptyline", "Thioridazine", "Other"), lty = c(1,1,1,1,1), 
+       col = c("red", "blue", "yellow", "purple", "orange") ,bty="n")
+
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+# log rank test
+survdiff(s.saia ~ primaryMed, data=saiasurv) # p=0.006 there is difference 
+
+
+
+
+
+
+
+
+#####adjusted 
+
+saia.cox.adj = coxph(s.saia ~ as.factor(primaryMed) + 
+        as.factor(primaryDiag) + as.factor(saiasurv$Martial) +saiasurv$AgeCat +saiasurv$sex2 +saiasurv$Weight+saiasurv$DBP+
+          saiasurv$SBP+ saiasurv$WD_trueBL_all, 
+    cluster = saiasurv$facility,
+    data = saiasurv
+)
+summary(saia.cox.adj)
+
+#####testing if prop hazard assumption holds using schoenfeld residual test 
+
+saia.cox.adj.schoenfeld = coxph(s.saia ~ as.factor(primaryMed) + 
+                       as.factor(primaryDiag) + as.factor(saiasurv$Martial) +saiasurv$AgeCat 
+                       +saiasurv$sex2, 
+                     cluster = saiasurv$facility,
+                     data = saiasurv
+)
+summary(saia.cox.adj.schoenfeld)
+
+#test
+# Test the proportional hazards assumption
+ph_test_adj <- cox.zph(saia.cox.adj.schoenfeld)
+
+# View the test results
+print(ph_test_adj)
+
+### test plot 
+
+# Plot Schoenfeld residuals to visually assess proportional hazards
+plot(ph_test_adj)
+
+### primary diag violates so we did stratify 
+
+cox_stratified <- coxph(s.saia ~ as.factor(primaryMed) + strata(as.factor(primaryDiag)) + 
+                          as.factor(saiasurv$Martial) + saiasurv$AgeCat + saiasurv$sex2, 
+                        cluster = saiasurv$facility, data = saiasurv)
+
+summary(cox_)
+
+
+#first med 
+table(saiasurv$PrimaryD)
+table(saiasurv$Firstmeds)
+
+library(dplyr)
+
+# Filter and then count the occurrences of each PrimaryD
+result <- saiasurv %>%
+    filter(Firstmeds == "Amitriptyline") %>%
+    count(PrimaryD)
+
+# View the result
+print(result)
+### model selection 
+
+modelAll.coxph <- coxph(s.saia ~ as.factor( saiasurv$primaryMed) + 
+                            as.factor( saiasurv$primaryDiag) + as.factor( saiasurv$Martial) +
+                            saiasurv$Age + saiasurv$sex2, 
+                        data = saiasurv)
+
+result.step <- step(modelAll.coxph, scope=list(upper=~as.factor( saiasurv$primaryMed) +
+                                                   
+                                                   as.factor( saiasurv$primaryDiag) + 
+                                                   as.factor( saiasurv$Martial) +
+                                                   saiasurv$Age + saiasurv$sex2, 
+                                               lower=~as.factor( saiasurv$primaryMed)))
+
+
+
+
+### ploting all the KM together 
+graphics.off()  # This will clear all graphics devices
+
+layout(matrix(1:6, nrow=3, ncol=2, byrow=TRUE))
+
+# Adjust label font size (example: 0.8 for smaller labels)
+label_font_size = 0.4
+# First plot - spans the entire first row
+plot(saia.km, main = "Kaplan-Meier survival estimate", 
+     xlab = "Survival time (Days)", 
+     ylab = "Survival Probability", cex=1.5)
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+# Fifth plot - second in the third row
+plot(surv_med.km, main = "Primary medication", 
+     xlab = "Survival time (Days)", ylab = "survival Probability",
+     col = c("red", "blue", "yellow", "purple", "orange"))
+legend("topright", c("Carbamazepine", "Haloperidol", "Amitriptyline", "Thioridazine", "Other"), 
+       lty = c(1, 1, 1, 1, 1), col = c("red", "blue", "yellow", "purple", "orange"), bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+# Second plot - first in the second row
+plot(Surv_sex.km, main = "Gender",
+     xlab = "Survival time (Days)",
+     ylab = "Survival Probability",
+     col = c("red", "blue"))
+legend("topright", legend = c("Male", "Female"),
+       col = c("red", "blue"), lty = 1, bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+
+# Fourth plot - first in the third row
+plot(surv_diag.km, 
+     main = "Primary diagnoses", 
+     xlab = "Survival time (Days)", 
+     ylab = "Survival Probability", 
+     col = c("red", "blue", "yellow", "purple", "orange", "black"))
+legend("topright", legend = c("Epilepsy", 
+                              "Schizophrenia related disorders",
+                              "Other psychotic and delusional disorders",
+                              "Depression related disorders", 
+                              "Mental and Behaviouraldisorders due to substance use",
+                              "All other diagnoses"), 
+       lty = c(1, 1, 1, 1, 1, 1), col = c("red", "blue", "yellow", "purple", "orange", "black"), 
+       bty="n",   
+       cex = 0.6)
+
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+# Third plot - second in the second row
+plot(Surv_age.km, 
+     main = "Age group", 
+     xlab = "Survival time (Days)", 
+     ylab = "survival Probability", 
+     col = c("red", "blue", "yellow", "purple"))
+legend("topright", legend = c("<18", "18-35", "36-55", "56+"),
+       lty = 1, col = c("red", "blue", "yellow", "purple"), bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+
+
+
+# Sixth plot - third in the third row
+plot(surv_mar.km, 
+     main = "Marital status", 
+     xlab = "Survival time (Days)", ylab = "Survival Probability", 
+     col = c("red", "blue", "green", "purple", "orange", "brown"))
+legend("topright", c("Divorced", "Separated", "Widowed",
+                     "Married", "Common-law", "Single"), 
+       lty = c(1, 1, 1, 1, 1, 1), col = c("red", "blue", "green", "purple", "orange", "brown"), bty = "n")
+abline(h=0.5, col="blue", lty=3, lwd=1.5)
+       
+#risk difference or attributable risk 
+
+install.packages("rms")
+library("rms")
+
+
+# Fit the model absolute hazard risk differnce 
+#adjusted 
+saia.cox_RD_adj <- ah(coxph(Surv(time, status)  ~ as.factor(primaryMed) + 
+                         as.factor(primaryDiag) + as.factor(saiasurv$Martial) +saiasurv$Age +saiasurv$sex2, 
+                     cluster = saiasurv$facility,
+                     data = saiasurv ))
+
+summary(saia.cox_RD_adj)
+
+
+
+
+######### repeated measure - mixed model analysis ####
+
+saiaMixed<- read.csv("~/Desktop/ThesisData/New/Saia_LMM_V4_final.csv")
+head(saiaMixed)
+
+saiaMixed$PatientID <- as.factor(saiaMixed$formcasecase_id)
+
+#  basic model
+model <- lme(WD_trueBL_all ~ 1, random = ~1 | PatientID, data = saiaMixed)
+model
+
+
+
+#  predictors
+
+library(nlme)
+
+table(saiaMixed$Firstmeds)
+table(saiaMixed$PrimaryD)
+
+saiaMixed$PriMed<- ifelse(saiaMixed$Firstmeds =="Carbamazepine",0,
+                             ifelse(saiaMixed$Firstmeds=="Haloperidol",1, 
+                                    ifelse(saiaMixed$Firstmeds=="Amitriptyline",2,
+                                           ifelse(saiaMixed$Firstmeds=="Thioridazine",3,4))))
+
+table(saiaMixed$PriMed)
+
+table(saiaMixed$PrimaryDiag)
+#primary diagnosis 
+saiaMixed$priDig<- ifelse(saiaMixed$PrimaryD=="Epilepsy",0,
+                              ifelse(saiaMixed$PrimaryD=="Schizophrenia",1,
+                                     ifelse(saiaMixed$PrimaryD=="Delusional disorder",2,
+                                            ifelse(saiaMixed$PrimaryD=="Depressive episodes",3,
+                                                   ifelse(saiaMixed$PrimaryD %in% c("Mental and behavioral disorders due to alcohol use",
+                                                                                            "Mental and behavioral disorders due to multiple drug use",
+                                                                                            "Mental and behavioral disorders due to opioid use"), 4, 5)))))
+
+                                                   
+                                                   
+
+
+
+
+
+# crude primary med
+
+
+modelWhoda_c <- lme(WD_trueBL_all ~ as.factor(PriMed), 
+                    random = ~ 1 | facility/PatientID,
+                    data = saiaMixed[saiaMixed$Age > 18, ],
+                    na.action = na.exclude)
+
+confint_modelWhoda_c <- intervals(modelWhoda_c, which = "fixed")
+print(confint_modelWhoda_c$fixed)
+# Summary of the model
+summary(modelWhoda_c)
+
+#global F for primary med
+
+modelWhoda_c.pm <- lme(WD_trueBL_all ~ PriMed, 
+                    random = ~ 1 | facility/PatientID,
+                    data = saiaMixed[saiaMixed$Age > 18, ],
+                    na.action = na.exclude)
+summary(modelWhoda_c.pm)
+
+#crude primary diag
+
+
+modelWhoda_cp <- lme(WD_trueBL_all ~ as.factor(priDig), 
+                    random = ~ 1 | facility/PatientID,
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_cp)
+
+confint_modelWhoda_cp <- intervals(modelWhoda_cp, which = "fixed")
+print(confint_modelWhoda_cp$fixed)
+
+
+## global f test for primary diag 
+
+modelWhoda_cp.gf <- lme(WD_trueBL_all ~ priDig, 
+                     random = ~ 1 | facility/PatientID,
+                     data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_cp.gf)
+## Sex crude 
+
+modelWhoda_s <- lme(WD_trueBL_all ~ sex2, 
+                     random = ~ 1 | facility/PatientID,
+                     data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_s)
+
+confint_modelWhoda_s <- intervals(modelWhoda_s, which = "fixed")
+print(confint_modelWhoda_s$fixed)
+
+#global f test sex 
+saiaMixed$sexgf<-ifelse(saiaMixed$sex2=="female",1,2)
+modelWhoda_s.gf <- lme(WD_trueBL_all ~ sexgf, 
+                    random = ~ 1 | facility/PatientID,
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_s.gf)
+## age
+table(saiaMixed$AgeCat)
+saiaMixed$Agegroup<- factor(saiaMixed$AgeCat, levels = c("18-35", "<18", "36-55", "56+"))
+
+modelWhoda_age <- lme(WD_trueBL_all ~ as.factor(Agegroup), 
+                    random = ~ 1 | facility/PatientID,
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+
+summary(modelWhoda_age)
+confint_modelWhoda_age <- intervals(modelWhoda_age, which = "fixed")
+print(confint_modelWhoda_age$fixed)
+
+#age for global test
+modelWhoda_age.gf <- lme(WD_trueBL_all ~Age, 
+                      random = ~ 1 | facility/PatientID,
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+
+summary(modelWhoda_age.gf)
+
+
+saiaMixed$Mar<- ifelse(saiaMixed$Martial=="Single",0,
+                      ifelse(saiaMixed$Martial=="Married", 1, 
+                             ifelse(saiaMixed$Martial=="Separated", 2, 
+                                    ifelse(saiaMixed$Martial=="Divorced",3,4))))
+## Martial
+modelWhoda_mar <- lme(WD_trueBL_all ~ as.factor(Mar), 
+                      random = ~ 1 | facility/PatientID,
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+
+summary(modelWhoda_mar)
+confint_modelWhoda_mar <- intervals(modelWhoda_mar, which = "fixed")
+print(confint_modelWhoda_mar$fixed)
+
+# martial global test
+
+modelWhoda_mar.gf <- lme(WD_trueBL_all ~ Mar, 
+                      random = ~ 1 | facility/PatientID,
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelWhoda_mar.gf)
+
+
+## Days
+saiaMixed$DAYS_30 = saiaMixed$DAYS / 30
+
+modelWhoda_days <- lme(WD_trueBL_all ~ DAYS_30, 
+                      random = ~ 1 | facility/PatientID,
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+
+summary(modelWhoda_days)
+
+confint_modelWhoda_days <- intervals(modelWhoda_days, which = "fixed")
+print(confint_modelWhoda_days$fixed)
+
+#model_coef <- summary(modelWhoda_days)$tTable
+
+#model_coef["DAYS", "Value"] <- model_coef["DAYS", "Value"] * 30
+
+#confint_modelWhoda_days <- intervals(modelWhoda_days, which = "fixed")
+#confint_modelWhoda_days$fixed["DAYS",] <- confint_modelWhoda_days$fixed["DAYS",] * 30
+#print(confint_modelWhoda_days$fixed)
+
+
+
+#adjusted 
+
+
+modelWhoda_adj <- lme(WD_trueBL_all ~ as.factor(PriMed)  + as.factor(priDig) + 
+                          DAYS_30 +as.factor(Agegroup) +as.factor(Mar) +sex2, 
+                  random = ~ 1 | facility/PatientID,
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_adj)
+
+
+confint_modelWhoda_adj <- intervals(modelWhoda_adj, which = "fixed")
+print(confint_modelWhoda_adj$fixed)
+
+
+#adjsuted for globla test 
+
+modelWhoda_adj.gf <- lme(WD_trueBL_all ~ PriMed  + priDig + 
+                          DAYS_30 +Age +Mar +sexgf, 
+                      random = ~ 1 | facility/PatientID,
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_adj.gf)
+
+
+confint_modelWhoda_adj <- intervals(modelWhoda_adj, which = "fixed")
+print(confint_modelWhoda_adj$fixed)
+
+#int 
+modelWhoda_int <- lme(WD_trueBL_all ~ as.factor(PriMed)  + as.factor(priDig) + 
+                         DAYS +as.factor(Agegroup) +as.factor(Mar) +sex2 + as.factor(PriMed)*DAYS, 
+                     random = ~ 1 | facility/PatientID,
+                     data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+# Summary of the model
+summary(modelWhoda_int)
+
+
+confint_modelWhoda_int <- intervals(modelWhoda_int, which = "fixed")
+print(confint_modelWhoda_int$fixed)
+
+# Plot a histogram of residuals
+hist(resid(modelWhoda), main = "Residuals Histogram", xlab = "Residuals")
+
+# QQ-plot of residuals
+qqnorm(resid(modelWhoda))
+qqline(resid(modelWhoda), col = "red")
+
+
+#systolic BP
+
+#SBP Curde 
+
+saiaMixed$SBP<-as.numeric( saiaMixed$SBP)
+#Meds
+modelsbp_c <- lme(SBP ~ as.factor(PriMed) , 
+                random = ~1 | facility/PatientID,  # Nested random effects
+                data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_c)
+confint_modelsbp_c  <- intervals(modelsbp_c, which = "fixed")
+print(confint_modelsbp_c$fixed)
+
+#med for global test
+
+modelsbp_c.gf <- lme(SBP ~ PriMed , 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_c.gf)
+
+# Diag
+modelsbp_cp <- lme(SBP ~ as.factor(priDig) , 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_cp)
+confint_modelsbp_cp  <- intervals(modelsbp_cp, which = "fixed")
+print(confint_modelsbp_cp$fixed)
+
+
+#diag for global test 
+
+modelsbp_cp.gf <- lme(SBP ~ priDig , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_cp.gf)
+
+#martial 
+
+modelsbp_mar <- lme(SBP ~ as.factor(Mar) , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_mar)
+
+confint_modelsbp_mar <- intervals(modelsbp_mar, which = "fixed")
+print(confint_modelsbp_mar $fixed)
+
+# mar global f test 
+
+modelsbp_mar.gf <- lme(SBP ~ Mar, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modelsbp_mar.gf)
+#gender
+
+modelsbp_s <- lme(SBP ~ sex2 , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ])
+
+summary(modelsbp_s)
+
+confint_modelsbp_s  <- intervals(modelsbp_s, which = "fixed")
+print(confint_modelsbp_s$fixed)
+#days 
+modelsbp_day <- lme(SBP ~ DAYS_30 , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ])
+
+summary(modelsbp_day)
+
+confint_modelsbp_day<- intervals(modelsbp_day, which = "fixed")
+print(confint_modelsbp_day$fixed)
+#age 
+modelsbp_age <- lme(SBP ~ as.factor(Agegroup) , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ])
+
+summary(modelsbp_age)
+
+
+confint_modelsbp_age <- intervals(modelsbp_age, which = "fixed")
+print(confint_modelsbp_age$fixed)
+
+
+#age global 
+
+modelsbp_age.gf <- lme(SBP ~ Age , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ])
+
+summary(modelsbp_age.gf)
+
+##SBP Adjsuted 
+
+modelsbp_adj <- lme(SBP ~ as.factor(PriMed) +as.factor(priDig) + DAYS_30 + as.factor(Agegroup) +as.factor(Mar) +sex2, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+
+summary(modelsbp_adj)
+confint_modelsbp_adj <- intervals(modelsbp_adj, which = "fixed")
+print(confint_modelsbp_adj$fixed)
+
+#adj global test
+
+modelsbp_adj.gf <- lme(SBP ~ PriMed +priDig + DAYS_30 + Age +Mar +sex2, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+
+summary(modelsbp_adj.gf)
+
+
+
+
+#int
+
+modelsbp_int <- lme(SBP ~ as.factor(PriMed) +as.factor(priDig) + DAYS+ as.factor(Agegroup)
+                    +as.factor(Mar) +sex2+ as.factor(PriMed)*DAYS, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+
+summary(modelsbp_int)
+confint_modelsbp_int <- intervals(modelsbp_int, which = "fixed")
+print(confint_modelsbp_int$fixed)
+
+
+# Plot a histogram of residuals
+hist(resid(modelsbp), main = "Residuals Histogram", xlab = "Residuals")
+
+# QQ-plot of residuals
+qqnorm(resid(modelsbp))
+qqline(resid(modelsbp), col = "red")
+
+
+#diastolic crude 
+
+#days
+
+modeldbp_day <- lme(DBP ~ DAYS_30 , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_day)
+
+confint_modeldbp_day<- intervals(modeldbp_day, which = "fixed")
+print(confint_modeldbp_day$fixed)
+
+#gender 
+
+
+modeldbp_s <- lme(DBP ~ sex2 , 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_s)
+
+confint_modeldbp_s  <- intervals(modeldbp_s, which = "fixed")
+print(confint_modeldbp_s$fixed)
+
+
+#gender global test
+
+modeldbp_s.gf <- lme(DBP ~ sexgf , 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_s.gf)
+
+#age
+
+modeldbp_age <- lme(DBP ~ as.factor(Agegroup) , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_age)
+
+
+confint_modeldbp_age <- intervals(modeldbp_age, which = "fixed")
+print(confint_modeldbp_age$fixed)
+
+# age global test
+
+modeldbp_age.gf <- lme(DBP ~ Age , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_age.gf)
+
+
+#Martial 
+
+modeldbp_mar <- lme(DBP ~ as.factor(Mar) , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_mar)
+
+confint_modeldbp_mar <- intervals(modeldbp_mar, which = "fixed")
+print(confint_modeldbp_mar $fixed)
+
+
+#mar global test 
+
+modeldbp_mar.gf <- lme(DBP ~ Mar , 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_mar.gf)
+
+
+#med
+
+modeldbp_c <- lme(DBP ~ as.factor(PriMed), 
+                random = ~1 | facility/PatientID,  # Nested random effects
+                data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modeldbp_c)
+
+confint_modeldbp_c <- intervals(modeldbp_c, which = "fixed")
+print(confint_modeldbp_c $fixed)
+
+
+#med global test
+modeldbp_c.gf <- lme(DBP ~ PriMed, 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modeldbp_c.gf)
+
+# diag 
+modeldbp_cp <- lme(DBP ~ as.factor(priDig) , 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_cp)
+confint_modeldbp_cp  <- intervals(modeldbp_cp, which = "fixed")
+print(confint_modeldbp_cp$fixed)
+
+
+#Diag global test
+modeldbp_cp.gf <- lme(DBP ~ priDig, 
+                   random = ~1 | facility/PatientID,  # Nested random effects
+                   data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+
+summary(modeldbp_cp.gf)
+
+## DBP adj 
+
+modeldbp_adj <- lme(DBP ~ as.factor(PriMed) +as.factor(priDig)+ DAYS_30
+                    + as.factor(Mar)+ sex2 + as.factor(Agegroup), 
+                  random = ~1 | facility/PatientID,  # Nested random effects
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modeldbp_adj)
+
+confint_modeldbp_adj  <- intervals(modeldbp_adj, which = "fixed")
+print(confint_modeldbp_adj$fixed)
+
+
+
+#adjusted global 
+modeldbp_adj.gf<- lme(DBP ~ PriMed + priDig+ DAYS_30
+                    + Mar + sex2 + Age, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modeldbp_adj.gf)
+
+#inter
+
+modeldbp_int <- lme(DBP ~ as.factor(PriMed) +as.factor(priDig)+ DAYS
+                    + as.factor(Mar)+ sex2 + as.factor(Agegroup)+ as.factor(PriMed)*DAYS, 
+                    random = ~1 | facility/PatientID,  # Nested random effects
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modeldbp_int)
+
+confint_modeldbp_int<- intervals(modeldbp_int, which = "fixed")
+print(confint_modeldbp_int$fixed)
+
+# Plot a histogram of residuals
+hist(resid(modeldbp), main = "Residuals Histogram", xlab = "Residuals")
+
+# QQ-plot of residuals
+qqnorm(resid(modeldbp))
+qqline(resid(modeldbp), col = "red")
+
+#weight crude
+saiaMixed$Weight
+
+# days 
+
+modelweight_day<- lme(Weight ~ DAYS_30 , 
+                    random = ~1 | facility/PatientID, 
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_day)
+
+confint_modelweight_day  <- intervals(modelweight_day, which = "fixed")
+print(confint_modelweight_day$fixed)
+
+#gender
+modelweight_s<- lme(Weight ~ sex2 , 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_s)
+
+confint_modelweight_s  <- intervals(modelweight_s, which = "fixed")
+print(confint_modelweight_s$fixed)
+
+#AGE
+
+modelweight_age<- lme(Weight ~ as.factor(Agegroup) , 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_age)
+
+confint_modelweight_age  <- intervals(modelweight_age, which = "fixed")
+print(confint_modelweight_age$fixed)
+
+
+#age global test
+modelweight_age.gf<- lme(Weight ~ Age , 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_age.gf)
+#mar
+
+modelweight_mar<- lme(Weight ~ as.factor(Mar) , 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_mar)
+
+confint_modelweight_mar  <- intervals(modelweight_mar, which = "fixed")
+print(confint_modelweight_mar$fixed)
+
+#mar global test 
+modelweight_mar.gf<- lme(Weight ~ Mar, 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_mar.gf)
+
+
+#meds 
+
+modelweight_c<- lme(Weight ~ as.factor(PriMed), 
+                  random = ~1 | facility/PatientID, 
+                  data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_c)
+
+confint_modelweight_c  <- intervals(modelweight_c, which = "fixed")
+print(confint_modelweight_c$fixed)
+
+
+#med global test 
+modelweight_c.gf<- lme(Weight ~ PriMed, 
+                    random = ~1 | facility/PatientID, 
+                    data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_c.gf)
+
+#diag
+
+modelweight_cp<- lme(Weight ~ as.factor(priDig) , 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_cp)
+
+confint_modelweight_cp  <- intervals(modelweight_cp, which = "fixed")
+print(confint_modelweight_cp$fixed)
+
+
+# global diag
+modelweight_cp.gf<- lme(Weight ~ priDig , 
+                     random = ~1 | facility/PatientID, 
+                     data = saiaMixed[saiaMixed$Age > 18, ], na.action = na.exclude)
+summary(modelweight_cp.gf)
+
+
+#weight adjusted 
+
+modelweight_adj<- lme(Weight ~ as.factor(PriMed) + as.factor(priDig)+DAYS_30+ as.factor(Agegroup)
+                      + as.factor(Mar)+ sex2, 
+                  random = ~1 | facility/PatientID, 
+                  data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+summary(modelweight_adj)
+
+confint_modelweight_adj  <- intervals(modelweight_adj, which = "fixed")
+print(confint_modelweight_adj$fixed)
+
+
+# adjusted globla test 
+
+modelweight_adj.df<- lme(Weight ~ PriMed + priDig+DAYS_30+ Age
+                      + Mar+ sex2, 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+summary(modelweight_adj.df)
+
+
+#interaction
+
+modelweight_int<- lme(Weight ~ as.factor(PriMed) + as.factor(priDig)+DAYS+ as.factor(Agegroup)
+                      + as.factor(Mar)+ sex2 + as.factor(PriMed)*DAYS, 
+                      random = ~1 | facility/PatientID, 
+                      data = saiaMixed[saiaMixed$Age > 18, ],na.action = na.exclude )
+summary(modelweight_int)
+
+confint_modelweight_int<- intervals(modelweight_int, which = "fixed")
+print(confint_modelweight_int$fixed)
+
+
+
+# Plot a histogram of residuals
+hist(resid(modelweight), main = "Residuals Histogram", xlab = "Residuals")
+
+# QQ-plot of residuals
+qqnorm(resid(modelweight))
+qqline(resid(modelweight), col = "red")
+
+###Adherance matter??
+
+# Model for adherent patients
+modelWhoda_adherent <- lme(WD_trueBL_all ~ as.factor(PriMed) + Time + priDig,
+                           random = ~ 1 | facility/PatientID,
+                           data = subset(saiaMixed_clean, Age > 18 & Event == "NO"))
+
+summary(modelWhoda_adherent)
+# Model for non-adherent patients
+modelWhoda_nonadherent <- lme(WD_trueBL_all ~ as.factor(PriMed) + Time + priDig, 
+                              random = ~ 1 | facility/PatientID,
+                              data = subset(saiaMixed_clean, Age > 18 & Event == "Yes"))
+
+# Summaries of the models
+
+summary(modelWhoda_nonadherent)
+
+
+
+
+# Fit the linear mixed-effects model including interaction with outcome
+modelWhoda_event <- lme(WD_trueBL_all ~ as.factor(PriMed) * Time * Event + priDig, 
+                        random = ~ 1 | facility/PatientID,
+                        data = saiaMixed_clean[saiaMixed_clean$Age > 18, ])
+
+# Summary of the model
+summary(modelWhoda_event)
+####Mixed model plots 
+
+mwhoda <- lm(modelWhoda, data=saiaMixed_clean)
+summary(mwhoda)
+
+#  plotting the whoda overtime by each patient to see the association 
+
+library(tidyverse)
+average_weight <- mean(saiaMixed$Weight.in.Kilos)
+
+ggplot(data = saiaMixed_clean[saiaMixed_clean$Age > 18, ], aes(x = Time, y = Weight.in.Kilos, color = PriMed)) +
+        geom_point() +
+        geom_smooth(method = "lm", se = FALSE, color = "black") +
+        labs(title = "Patient Weight Over Time by Medication Group",
+             x = "Date",
+             y = "Weight in Kg") +
+        theme_minimal()
+
+#average weight for each patient 
+
+library(dplyr)
+view(saiaMixed)
+
+average_weights_per_patient <- saiaMixed %>%
+        group_by(PatientID) %>%
+        summarize(average_weight = mean(Weight.in.Kilos))
+saiaMixed_with_avg <- saiaMixed %>%
+        left_join(average_weights_per_patient, by = "PatientID")
+ggplot(data = saiaMixed_with_avg, aes(x =Time, y = average_weight, color = PriMed)) +
+        geom_point() +
+        geom_line(aes(group = PatientID)) +
+        labs(title = "Average Patient Weight Over Time by Medication Group",
+             x = "Days Since Enrollment",
+             y = "Average Weight (kg)") +
+        theme_minimal()
+
+
+
+
+saiaMixed_filtered <- saiaMixed %>%
+        filter(Age > 18, Weight.in.Kilos<140)
+
+average_weights_over_time <- saiaMixed_filtered %>%
+        group_by(Time, PriMed) %>%
+        summarize(average_weight = mean(Weight.in.Kilos, na.rm = TRUE))
+
+ggplot(data = average_weights_over_time, aes(x =Time, y = average_weight, color = PriMed)) +
+        geom_line() +
+        labs(title = "Average Weight of All Patients Over Time by Primary Medication",
+             x = "Days Since Enrollment",
+             y = "Average Weight (kg)") +
+        theme_minimal()
+
+
+
+# Calculate the average weight per medication group for each time point
+average_weights_over_time <- saiaMixed_filtered %>%
+        group_by(Time, PriMed) %>%
+        summarize(average_weight = mean(Weight.in.Kilos, na.rm = TRUE)) %>%
+        ungroup()  # Ungroup for plotting
+
+# Plot the data with an average line for each medication group
+ggplot(data = saiaMixed_filtered, aes(x = Time, y = Weight.in.Kilos, group = PriMed, color = as.factor(PriMed))) +
+        geom_point(alpha = 0.5) +  # Use alpha to make points semi-transparent if there's overplotting
+        geom_line(data = average_weights_over_time, aes(y = average_weight)) +
+        labs(title = "Average Weight of All Patients Over Time by Primary Medication",
+             x = "Days Since Enrollment",
+             y = "Average Weight (kg)",
+             color = "Primary Medication") +
+        theme_minimal() +
+        scale_color_brewer(palette = "Set1")  # Optional: for a specific color palette
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
